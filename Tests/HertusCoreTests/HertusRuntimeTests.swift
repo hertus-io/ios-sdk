@@ -37,7 +37,7 @@ final class HertusRuntimeTests: XCTestCase {
     private func makeRuntime(settings: GuardSettings?) -> HertusRuntime {
         HertusRuntime(
             factory: factory,
-            settingsSource: StubSettingsSource(settings: settings),
+            makeSource: { _, _, _ in StubConfigurationSource(settings: settings) },
             schedule: { work in work() },
             deliver: { work in work() },
             now: { 0 }
@@ -203,11 +203,22 @@ final class HertusRuntimeTests: XCTestCase {
     }
 }
 
-/// Stands in for bootstrap, which does not exist yet.
-private struct StubSettingsSource: GuardSettingsSource {
+/// Answers immediately with whatever the test chose, so the runtime's own
+/// behaviour is what is under test rather than the bootstrap sequence's.
+private final class StubConfigurationSource: ConfigurationSource {
     let settings: GuardSettings?
 
-    func load(completion: @escaping (GuardSettings?) -> Void) {
-        completion(settings)
+    init(settings: GuardSettings?) {
+        self.settings = settings
+    }
+
+    func start(listener: ConfigurationListener) {
+        guard let settings else {
+            listener.configurationUnavailable()
+            return
+        }
+        listener.configurationReady(
+            BootstrapConfig(configVersion: "cv1", ttlSeconds: 3_600, guardSettings: settings)
+        )
     }
 }

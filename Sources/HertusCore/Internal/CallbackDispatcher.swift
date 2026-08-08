@@ -13,7 +13,7 @@ import Foundation
 public final class CallbackDispatcher {
 
     /// How a callback reaches the host app. Defaults to the main queue.
-    public typealias Deliver = (@escaping () -> Void) -> Void
+    public typealias Deliver = (@escaping @Sendable () -> Void) -> Void
 
     private let onInitialized: HertusInitHandler?
     private let onError: HertusErrorHandler?

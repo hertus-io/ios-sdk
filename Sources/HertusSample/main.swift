@@ -198,10 +198,24 @@ print("""
   would send held constant. Nothing about the calling code changes.
 """)
 
-/// Stands in for bootstrap, which does not exist yet.
-struct SampleSettingsSource: GuardSettingsSource {
-    func load(completion: @escaping (GuardSettings?) -> Void) {
-        completion(GuardSettings(enabled: true, provider: "s1", publicKey: "key", region: "eu"))
+/// Answers instantly with a configuration, standing in for the server.
+///
+/// The real source reads the cache and then talks to the server, which is not
+/// something a console sample should do.
+final class SampleConfigurationSource: ConfigurationSource {
+    func start(listener: ConfigurationListener) {
+        listener.configurationReady(
+            BootstrapConfig(
+                configVersion: "sample",
+                ttlSeconds: 3_600,
+                guardSettings: GuardSettings(
+                    enabled: true,
+                    provider: "s1",
+                    publicKey: "key",
+                    region: "eu"
+                )
+            )
+        )
     }
 }
 
@@ -230,7 +244,7 @@ func describeStartup(
 
     let runtime = HertusRuntime(
         factory: factory,
-        settingsSource: SampleSettingsSource(),
+        makeSource: { _, _, _ in SampleConfigurationSource() },
         schedule: { $0() },
         deliver: { $0() }
     )

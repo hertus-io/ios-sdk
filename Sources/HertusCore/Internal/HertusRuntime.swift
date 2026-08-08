@@ -1,29 +1,5 @@
 import Foundation
 
-/// Where the runtime gets the server half of its configuration.
-///
-/// A protocol so that the bootstrap client can be dropped in when it exists
-/// without the runtime changing, and so a test can drive the whole startup path
-/// without a network.
-public protocol GuardSettingsSource {
-    /// Answers exactly once, with nil when no configuration could be obtained.
-    func load(completion: @escaping (GuardSettings?) -> Void)
-}
-
-/// The source until bootstrap exists.
-///
-/// It answers nil, which settles the SDK into `degraded`: fully functional
-/// minus Guard, which is the correct state for a device that could not be told
-/// what to do. See docs/SDK.md, "Degradation".
-public struct UnavailableGuardSettingsSource: GuardSettingsSource {
-
-    public init() {}
-
-    public func load(completion: @escaping (GuardSettings?) -> Void) {
-        completion(nil)
-    }
-}
-
 /// Everything the SDK actually does, off the caller's thread.
 ///
 /// `Hertus` is a facade over one of these. The split exists so the namespace has
@@ -42,17 +18,29 @@ public struct UnavailableGuardSettingsSource: GuardSettingsSource {
 public final class HertusRuntime {
 
     /// How background work is scheduled. Injected so a test can run it inline.
-    public typealias Scheduler = (@escaping () -> Void) -> Void
+    public typealias Scheduler = (@escaping @Sendable () -> Void) -> Void
+
+    /// Builds the configuration source once the token has been accepted.
+    ///
+    /// A closure rather than a value because the real source needs the app
+    /// token, the environment and the resolved server URL, none of which exist
+    /// until `initialize` is called.
+    public typealias SourceFactory = (HertusConfig, String, Logger) -> ConfigurationSource
 
     /// The SDK's own queue: serial, and below the host app's work. Measurement
     /// is never the reason somebody's frame was dropped.
     private static let queue = DispatchQueue(label: "io.hertus.sdk", qos: .utility)
 
     private let factory: SignalEngineFactory
-    private let settingsSource: GuardSettingsSource
+    private let makeSource: SourceFactory
     private let schedule: Scheduler
     private let deliver: CallbackDispatcher.Deliver
     private let now: () -> TimeInterval
+
+    private var source: ConfigurationSource?
+    private var settledConfig: HertusConfig?
+    private var settledGuard: HertusGuard?
+    private var settledCallbacks: CallbackDispatcher?
 
     private let states = SdkStateHolder()
     private let lock = NSLock()
@@ -64,22 +52,43 @@ public final class HertusRuntime {
     private var guardModule: HertusGuard?
 
     /// - Parameters:
+    ///   - makeSource: how configuration is obtained. Nil builds the real one,
+    ///     which reads the cache and talks to the server.
     ///   - schedule: how background work runs. Nil uses the SDK's own serial
     ///     queue, which is private, so the default is resolved here rather than
     ///     in the signature.
     ///   - deliver: how a callback reaches the host app. Nil uses the main queue.
     public init(
         factory: SignalEngineFactory = .shared,
-        settingsSource: GuardSettingsSource = UnavailableGuardSettingsSource(),
+        makeSource: SourceFactory? = nil,
         schedule: Scheduler? = nil,
         deliver: CallbackDispatcher.Deliver? = nil,
         now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) {
         self.factory = factory
-        self.settingsSource = settingsSource
+        self.makeSource = makeSource ?? HertusRuntime.defaultSource
         self.schedule = schedule ?? { work in HertusRuntime.queue.async(execute: work) }
         self.deliver = deliver ?? { work in DispatchQueue.main.async(execute: work) }
         self.now = now
+    }
+
+    /// The cache, the server, and the rules for choosing between them.
+    public static let defaultSource: SourceFactory = { config, serverUrl, log in
+        let device = DeviceInfoReader.read(sdkVersion: SdkInfo.version)
+
+        return BootstrapConfigurationSource(
+            cache: BootstrapCache(appToken: config.appToken, environment: config.environment),
+            newFetcher: {
+                BootstrapClient(
+                    baseUrl: serverUrl,
+                    appToken: config.appToken,
+                    environment: config.environment,
+                    device: device,
+                    log: log
+                )
+            },
+            log: log
+        )
     }
 
     public var state: SdkState { states.current }
@@ -158,8 +167,18 @@ public final class HertusRuntime {
                 + "server=\(endpoint.url), guard=\(guardState))"
         )
 
+        let built = makeSource(config, endpoint.url, logger)
+
+        lock.lock()
+        source = built
+        settledConfig = config
+        settledGuard = module
+        settledCallbacks = dispatcher
+        lock.unlock()
+
         schedule { [weak self] in
-            self?.startUp(config: config, logger: logger, dispatcher: dispatcher, module: module)
+            guard let self else { return }
+            built.start(listener: self)
         }
     }
 
@@ -189,45 +208,6 @@ public final class HertusRuntime {
         return value && !states.current.isTerminal
     }
 
-    // MARK: startup
-
-    private func startUp(
-        config: HertusConfig,
-        logger: Logger,
-        dispatcher: CallbackDispatcher,
-        module: HertusGuard
-    ) {
-        settingsSource.load { [weak self] settings in
-            guard let self else { return }
-
-            guard let settings else {
-                // No configuration means no Guard, and it is not a failure the
-                // host app can act on. Degraded is a fully functional SDK minus
-                // identification, which is the correct state for a device that
-                // could not be told what to do.
-                logger.w("no configuration is available, so Guard stays off for this launch")
-                self.states.move(to: .degraded)
-                dispatcher.announceInitialized(ready: false)
-                return
-            }
-
-            // Guard re-checks the client switches itself, so the decision lives
-            // in one place rather than being made here and again there.
-            module.start(
-                settings: settings,
-                clientEnabled: config.guardEnabled,
-                guardInSandbox: config.guardInSandbox,
-                environment: config.environment,
-                sdkVersion: SdkInfo.version
-            )
-
-            self.identifyOnce(module: module, dispatcher: dispatcher)
-
-            self.states.move(to: .ready)
-            dispatcher.announceInitialized(ready: true)
-        }
-    }
-
     /// One identification per launch.
     ///
     /// This slice reports the result to the host app. It does not upload it:
@@ -241,5 +221,65 @@ public final class HertusRuntime {
                 error: error
             )
         }
+    }
+
+    private func settled() -> (HertusConfig, HertusGuard, CallbackDispatcher)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let config = settledConfig, let module = settledGuard, let dispatcher = settledCallbacks
+        else { return nil }
+        return (config, module, dispatcher)
+    }
+}
+
+// MARK: ConfigurationListener
+
+extension HertusRuntime: ConfigurationListener {
+
+    /// May arrive more than once. A configuration that lands behind an already
+    /// announced failure upgrades the SDK in place, and a revalidation that
+    /// finds a changed configuration restarts Guard on it.
+    public func configurationReady(_ config: BootstrapConfig) {
+        guard let (hostConfig, module, dispatcher) = settled() else { return }
+
+        // Guard re-checks the client switches itself, so the decision lives in
+        // one place rather than being made here and again there.
+        module.start(
+            settings: config.guardSettings,
+            clientEnabled: hostConfig.guardEnabled,
+            guardInSandbox: hostConfig.guardInSandbox,
+            environment: hostConfig.environment,
+            sdkVersion: SdkInfo.version
+        )
+
+        identifyOnce(module: module, dispatcher: dispatcher)
+
+        states.move(to: .ready)
+        dispatcher.announceInitialized(ready: true)
+    }
+
+    /// No configuration means no Guard, and it is not a failure the host app can
+    /// act on. Degraded is a fully functional SDK minus identification, which is
+    /// the correct state for a device that could not be told what to do.
+    public func configurationUnavailable() {
+        guard let (_, _, dispatcher) = settled() else { return }
+
+        states.move(to: .degraded)
+        dispatcher.announceInitialized(ready: false)
+        dispatcher.deliverError(.serverUnavailable)
+    }
+
+    /// A token that is not ours will not become ours by asking again.
+    public func configurationRejected() {
+        guard let (_, _, dispatcher) = settled() else { return }
+
+        states.move(to: .disabled)
+        dispatcher.deliverError(.serverRejected)
+        dispatcher.announceInitialized(ready: false)
+    }
+
+    public func configurationError(_ code: HertusErrorCode) {
+        guard let (_, _, dispatcher) = settled() else { return }
+        dispatcher.deliverError(code)
     }
 }
