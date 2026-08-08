@@ -47,6 +47,38 @@ public enum Hertus {
         runtime.initialize(config)
     }
 
+    /// Records one event.
+    ///
+    /// ```swift
+    /// Hertus.track(RevenueEvent(amount: 4.99, currency: "USD", productId: "pro_monthly"))
+    /// ```
+    ///
+    /// Returns immediately. The event is queued, batched with others, and sent
+    /// when there is enough to be worth a request or when `flush` asks for it.
+    /// Safe to call before startup finishes: what is raised during startup goes
+    /// out with the first batch.
+    ///
+    /// Events raised before `initialize` are dropped. That is a programming
+    /// error a developer can fix, and the alternative is an unbounded queue in a
+    /// process the SDK has not been told it is running in.
+    public static func track(_ event: HertusEvent) {
+        runtime.track(event)
+    }
+
+    /// Asks the SDK to upload what it is holding.
+    ///
+    /// Advisory: the SDK decides when it actually goes. Worth calling when the
+    /// host app knows something the SDK cannot, such as a checkout completing or
+    /// the app being about to go to the background.
+    public static func flush() {
+        runtime.flush()
+    }
+
+    /// How many events are waiting to be sent, for a host app's diagnostics.
+    public static func pendingEventCount() -> Int {
+        runtime.pendingEventCount
+    }
+
     /// Turns measurement off, or back on, at runtime.
     ///
     /// For an in-app privacy toggle. The setting is not persisted; a host app
