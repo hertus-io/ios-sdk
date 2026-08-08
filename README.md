@@ -16,8 +16,9 @@ expresses, under the same type names and with the same validation.
 
 | Target | What it is |
 | --- | --- |
-| `HertusCore` | Platform independent. Foundation only. The event model, validation, state machine, retry schedule, wire format. No UIKit, nothing that needs a device. |
-| `Hertus` | The product a host app depends on. The public facade plus the Apple platform layer: lifecycle, storage, networking, the Guard adapter. |
+| `HertusCore` | Platform independent. Foundation only. The event model, validation, state machine, retry schedule, wire format, and all of Guard except the engine itself. No UIKit, nothing that needs a device. |
+| `Hertus` | The product a host app depends on. The public facade plus, later, the Apple platform layer: lifecycle, storage, networking. |
+| `HertusGuardS1` | The adapter onto the identification engine. The only target in the package that imports it, and the only one that names it. Opted into separately. |
 
 The split is not decoration. Everything with a decision in it lives in
 `HertusCore`, so it can be tested on any machine with a Swift toolchain rather
@@ -60,6 +61,41 @@ amount, a non-finite number and an unusable event name.
 It makes no network call and starts no engine, and says so on the way out. A
 SwiftUI sample arrives when `Hertus.initialize` and `Hertus.track` do, because
 a screen whose buttons do nothing is worse than no screen.
+
+## Guard
+
+The fraud module. It answers one question, whether this device is what it claims
+to be, and it does so by wrapping a third party engine rather than by
+fingerprinting devices itself.
+
+```swift
+HertusGuardS1.enable()
+Hertus.initialize(config)
+```
+
+One line, and it has to be written. Swift has no portable equivalent of the
+reflection the Android SDK uses to find its adapter, so registration through
+`SignalEngineFactory` is explicit here. That is a trade rather than a loss: on
+Android the reflective lookup is invisible to R8, which strips the adapter from
+minified builds and turns Guard into a no-op indistinguishable from a correctly
+disabled Guard, and a keep rule has to ship inside the AAR to prevent it.
+Nothing can strip a registration that was executed.
+
+Not calling it is a supported configuration. `enable()` returns whether there
+was an engine to register, and a build without one runs with Guard off rather
+than failing.
+
+**The state of this.** Everything except the engine binding is written and
+tested: the seam, the orchestration, the registry, the settings validation, the
+degradation rules and the logging discipline. The adapter in `HertusGuardS1` is
+compiled only when the engine is present, and the engine dependency is not
+declared yet, so that file has not been compiled anywhere. Adding the dependency
+and verifying the mapping is a Mac-side change, because the engine ships as an
+Apple binary.
+
+Guard also does nothing end to end until bootstrap exists, on either platform:
+the server currently answers `guard.enabled: false` and has never composed the
+block that turns it on. See `docs/SDK.md`, "What must exist first".
 
 ## Parity with Android
 
