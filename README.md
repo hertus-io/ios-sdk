@@ -46,6 +46,21 @@ run in development. Building **for iOS**, running on a simulator, and producing
 an `.xcframework` all need a Mac with Xcode. Nothing in `HertusCore` may depend
 on that being available.
 
+## The sample
+
+```bash
+swift run hertus-sample
+```
+
+A console program rather than a screen, so it runs on a machine with no
+simulator. It builds one of every event, prints the envelope each produces,
+and shows what validation does to a lowercase currency code, a negative
+amount, a non-finite number and an unusable event name.
+
+It makes no network call and starts no engine, and says so on the way out. A
+SwiftUI sample arrives when `Hertus.initialize` and `Hertus.track` do, because
+a screen whose buttons do nothing is worse than no screen.
+
 ## Parity with Android
 
 The two native SDKs are generated from one contract and are meant to stay

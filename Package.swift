@@ -25,6 +25,10 @@ let package = Package(
     ],
     products: [
         .library(name: "Hertus", targets: ["Hertus"]),
+        // Runs on any host with a Swift toolchain, which is the point: it
+        // exercises the parts of the SDK that have no device in them, on a
+        // machine that has no simulator.
+        .executable(name: "hertus-sample", targets: ["HertusSample"]),
     ],
     targets: [
         .target(
@@ -35,6 +39,11 @@ let package = Package(
             name: "Hertus",
             dependencies: ["HertusCore"],
             path: "Sources/Hertus"
+        ),
+        .executableTarget(
+            name: "HertusSample",
+            dependencies: ["Hertus"],
+            path: "Sources/HertusSample"
         ),
         .testTarget(
             name: "HertusCoreTests",

@@ -1,0 +1,204 @@
+import Foundation
+import Hertus
+
+// A sample that runs anywhere a Swift toolchain does, including a machine with
+// no simulator and no Mac.
+//
+// It exercises what the SDK actually has today: the event model, the validation
+// rules, the wire format, and the configuration policy. It makes no network
+// call and starts no engine, because neither exists yet. See the closing
+// section, which says so on the console rather than leaving it to be
+// discovered.
+//
+// A SwiftUI sample lands with `Hertus.initialize` and `Hertus.track`. Writing
+// one now would mean shipping a screen whose buttons do nothing.
+
+// MARK: printing
+
+func section(_ title: String) {
+    print("")
+    print("=== \(title) ".padding(toLength: 72, withPad: "=", startingAt: 0))
+}
+
+func show(_ event: HertusEvent) {
+    print("")
+    print("  \(event)")
+    print("  well formed: \(event.isWellFormed)")
+
+    for rejection in event.rejections {
+        print("  refused:     \(rejection)")
+    }
+
+    let envelope = event.envelope(
+        eventId: UUID().uuidString,
+        occurredAtMillis: Int64(Date().timeIntervalSince1970 * 1000)
+    )
+
+    guard
+        let data = try? JSONSerialization.data(
+            withJSONObject: abbreviated(envelope.jsonObject()),
+            options: [.prettyPrinted, .sortedKeys]
+        ),
+        let text = String(data: data, encoding: .utf8)
+    else {
+        print("  the envelope did not serialize, which should be impossible")
+        return
+    }
+
+    print(text.split(separator: "\n").map { "  \($0)" }.joined(separator: "\n"))
+}
+
+/// Shortens long strings for the console only.
+///
+/// A store receipt is several kilobytes and would bury everything else here.
+/// The real envelope carries it whole, which is the point of the exemption, so
+/// this reports the length rather than pretending the value was truncated.
+func abbreviated(_ object: [String: Any]) -> [String: Any] {
+    guard var parameters = object[EventEnvelope.fieldParameters] as? [String: Any] else {
+        return object
+    }
+
+    for (key, value) in parameters {
+        if let text = value as? String, text.count > 64 {
+            parameters[key] = "<\(text.count) characters, sent whole>"
+        }
+    }
+
+    var copy = object
+    copy[EventEnvelope.fieldParameters] = parameters
+    return copy
+}
+
+// MARK: the SDK
+
+section("SDK")
+print("  version:  \(Hertus.sdkVersion())")
+print("  platform: \(Hertus.platform())")
+
+// MARK: typed events
+
+section("Typed events")
+print("""
+  Each of these is a class with named, typed parameters. Every one of them
+  serializes to the same envelope: a name and a map. Nothing downstream can
+  tell which class produced it, which is what lets a new event type ship
+  without touching a bridge.
+""")
+
+show(
+    RevenueEvent(
+        amount: 4.99,
+        currency: "USD",
+        productId: "pro_monthly"
+    )
+)
+
+show(
+    PurchaseEvent(
+        productId: "pro_monthly",
+        amount: 4.99,
+        currency: "USD",
+        transactionId: "2000000123456789",
+        receipt: String(repeating: "receiptdata", count: 400)
+    )
+)
+
+show(
+    SubscriptionEvent(
+        productId: "pro_annual",
+        amount: 39.99,
+        currency: "USD",
+        transactionId: "2000000987654321",
+        periodDays: 365
+    )
+)
+
+show(
+    AdRevenueEvent(
+        source: "applovin_max",
+        amount: 0.0031,
+        currency: "USD",
+        network: "meta",
+        placement: "rewarded_end"
+    )
+)
+
+// MARK: the escape hatch
+
+section("Custom events")
+print("""
+  The escape hatch, and the one most apps use most. Everything the typed
+  classes do could be done with this.
+""")
+
+show(
+    CustomEvent("level_complete") {
+        $0.put("level", 12)
+        $0.put("duration_seconds", 94.5)
+        $0.put("used_hint", false)
+        $0.put("world", "forest")
+    }
+)
+
+// MARK: validation
+
+section("Validation refuses values, never events")
+print("""
+  A malformed figure is worth less than the fact that something happened, and
+  throwing here would put the SDK in a host app's crash reports. Each of these
+  loses the bad parameter and keeps the event.
+""")
+
+print("\n  lowercase currency, which is the most common mistake:")
+show(RevenueEvent(amount: 4.99, currency: "usd"))
+
+print("\n  a negative amount, which is usually a refund reported the wrong way:")
+show(RevenueEvent(amount: -10.0, currency: "USD"))
+
+print("\n  a value with no JSON form:")
+show(CustomEvent("telemetry") { $0.put("ratio", Double.nan) })
+
+print("\n  an event name the reports cannot use:")
+show(CustomEvent("not a valid name") { $0.put("kept", true) })
+
+// MARK: configuration
+
+section("Configuration policy")
+
+var config = HertusConfig(
+    appToken: String(repeating: "a", count: 64),
+    environment: .sandbox
+)
+config.logLevel = .debug
+config.delayStartSeconds = 99
+
+print("  token well formed:  \(config.hasWellFormedToken)")
+print("  delayStart 99s becomes \(config.delayStartMillis)ms, because it is clamped")
+
+var wrong = HertusConfig(appToken: "not-a-token", environment: .production)
+wrong.serverUrl = "http://example.com"
+print("  a pasted token that is not 64 hex: well formed = \(wrong.hasWellFormedToken)")
+
+print("""
+
+  A config is a struct, so the copy the SDK is handed cannot be edited from
+  under it. That is why the iOS SDK needs no snapshot where the Android one
+  does.
+""")
+
+// MARK: what is not here
+
+section("What this sample deliberately does not do")
+print("""
+  No network call was made and no identification engine was started, because
+  neither exists in this SDK yet.
+
+  Still to come, in this order:
+    1. bootstrap        fetch configuration, cache it, retry with backoff
+    2. Guard            the identification adapter, behind the same seam the
+                        Android SDK uses, so no shipped symbol names the vendor
+    3. ingest           sessions, installs, and the events printed above
+
+  Everything shown here is covered by `swift test`. Nothing here needs a Mac.
+""")
+print("")
