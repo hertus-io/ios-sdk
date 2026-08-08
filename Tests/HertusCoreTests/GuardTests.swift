@@ -163,15 +163,15 @@ final class SignalEngineFactoryTests: XCTestCase {
     }
 
     func testAnUnregisteredProviderIsNotKnown() {
-        XCTAssertFalse(factory.knows("s1"))
-        XCTAssertFalse(factory.knows(nil))
+        XCTAssertFalse(factory.canResolve("s1"))
+        XCTAssertFalse(factory.canResolve(nil))
     }
 
     func testARegisteredProviderIsKnownAndConstructed() {
         factory.register(provider: "s1") { FakeSignalEngine() }
 
-        XCTAssertTrue(factory.knows("s1"))
-        XCTAssertTrue(factory.create("s1") is FakeSignalEngine)
+        XCTAssertTrue(factory.canResolve("s1"))
+        XCTAssertTrue(factory.resolve("s1") is FakeSignalEngine)
     }
 
     /// An unknown provider and a missing registration mean the same thing
@@ -179,8 +179,8 @@ final class SignalEngineFactoryTests: XCTestCase {
     func testAnUnknownProviderYieldsTheNoopEngineRatherThanNil() {
         factory.register(provider: "s1") { FakeSignalEngine() }
 
-        XCTAssertTrue(factory.create("s2") is NoopSignalEngine)
-        XCTAssertTrue(factory.create(nil) is NoopSignalEngine)
+        XCTAssertTrue(factory.resolve("s2") is NoopSignalEngine)
+        XCTAssertTrue(factory.resolve(nil) is NoopSignalEngine)
     }
 
     /// A host app calling enable() twice is harmless, not an error a
@@ -189,14 +189,14 @@ final class SignalEngineFactoryTests: XCTestCase {
         factory.register(provider: "s1") { NoopSignalEngine() }
         factory.register(provider: "s1") { FakeSignalEngine() }
 
-        XCTAssertTrue(factory.create("s1") is FakeSignalEngine)
+        XCTAssertTrue(factory.resolve("s1") is FakeSignalEngine)
     }
 
     func testEachCreateProducesAFreshEngine() {
         factory.register(provider: "s1") { FakeSignalEngine() }
 
-        let first = factory.create("s1")
-        let second = factory.create("s1")
+        let first = factory.resolve("s1")
+        let second = factory.resolve("s1")
         XCTAssertFalse(first === second)
     }
 
@@ -204,7 +204,7 @@ final class SignalEngineFactoryTests: XCTestCase {
         factory.register(provider: "s1") { FakeSignalEngine() }
         factory.reset()
 
-        XCTAssertFalse(factory.knows("s1"))
+        XCTAssertFalse(factory.canResolve("s1"))
     }
 }
 

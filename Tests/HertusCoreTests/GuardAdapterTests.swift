@@ -26,7 +26,7 @@ final class GuardAdapterTests: XCTestCase {
             HertusGuardS1.isAvailable,
             "enable must agree with isAvailable about whether this build has an engine"
         )
-        XCTAssertEqual(factory.knows(HertusGuardS1.providerKey), HertusGuardS1.isAvailable)
+        XCTAssertEqual(factory.canResolve(HertusGuardS1.providerKey), HertusGuardS1.isAvailable)
     }
 
     /// An integrator who called enable() and still got no Guard has a
@@ -35,7 +35,7 @@ final class GuardAdapterTests: XCTestCase {
         try XCTSkipIf(HertusGuardS1.isAvailable, "this build carries the engine")
 
         XCTAssertFalse(HertusGuardS1.enable(into: factory))
-        XCTAssertFalse(factory.knows(HertusGuardS1.providerKey))
+        XCTAssertFalse(factory.canResolve(HertusGuardS1.providerKey))
     }
 
     /// Guard falls back to the no-op engine rather than nil, so nothing

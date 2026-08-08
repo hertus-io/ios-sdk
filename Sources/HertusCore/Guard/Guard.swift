@@ -75,12 +75,12 @@ public final class HertusGuard {
             return
         }
 
-        guard factory.knows(settings.provider) else {
+        guard factory.canResolve(settings.provider) else {
             log.i("guard off: this build has no engine for provider '\(settings.provider ?? "none")'")
             return
         }
 
-        let candidate = factory.create(settings.provider)
+        let candidate = factory.resolve(settings.provider)
 
         if candidate is NoopSignalEngine {
             // The provider is registered but the factory produced nothing

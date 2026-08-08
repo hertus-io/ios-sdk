@@ -1,34 +1,40 @@
 import Foundation
 import HertusCore
 
-/// Switches Guard on for this build.
+/// The identification engine, as a host app sees it.
+///
+/// **There is normally nothing to call.** Adding this library to a target is the
+/// whole integration: `SignalEngineFactory` finds the adapter through the
+/// Objective-C runtime, and `Hertus.initialize` decides whether it actually runs
+/// from `guardEnabled`, the environment and the server's answer. That is the
+/// same arrangement as the Android SDK, where `Class.forName` does the finding
+/// and the host app calls `initialize` and nothing else.
 ///
 /// ```swift
-/// HertusGuardS1.enable()
 /// Hertus.initialize(config)
 /// ```
 ///
-/// One line, and it has to be written: Swift has no portable equivalent of the
-/// reflection the Android SDK uses to find its adapter, so registration is
-/// explicit here. That is a trade rather than a loss. On Android the reflective
-/// lookup is invisible to R8, which strips the adapter from minified builds and
-/// turns Guard into a no-op that looks exactly like a correctly disabled Guard;
-/// a keep rule has to ship inside the AAR to prevent it. Nothing can strip a
-/// registration that was executed.
-///
-/// Calling it more than once is harmless. Not calling it at all is a supported
-/// configuration: the SDK runs with Guard off rather than failing.
+/// `enable()` exists for the one case where that fails. Runtime lookup is
+/// invisible to the linker, so a build with aggressive dead stripping can remove
+/// the adapter and leave Guard a no-op indistinguishable from a correctly
+/// disabled Guard. On Apple platforms the fix is the `-ObjC` linker flag, which
+/// is the counterpart of the keep rule that ships inside the Android AAR. A host
+/// app that cannot set it can register explicitly instead.
 public enum HertusGuardS1 {
 
     /// The `provider` discriminator the bootstrap response uses for this
     /// engine. Deliberately opaque, and deliberately not the vendor's name.
     public static let providerKey = "s1"
 
-    /// Registers the engine, and reports whether there was one to register.
+    /// Registers the engine explicitly, ahead of runtime discovery, and reports
+    /// whether there was one to register.
+    ///
+    /// Not normally needed. Call it before `Hertus.initialize` only when the
+    /// linker strips the adapter and `-ObjC` is not an option.
     ///
     /// Returns false when this build was compiled without the identification
     /// engine available, which is worth surfacing rather than hiding: an
-    /// integrator who called `enable()` and got Guard anyway has a dependency
+    /// integrator who called this and still got no Guard has a dependency
     /// problem, and silence would send them to the dashboard instead.
     @discardableResult
     public static func enable(into factory: SignalEngineFactory = .shared) -> Bool {

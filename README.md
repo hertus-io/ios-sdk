@@ -69,21 +69,41 @@ to be, and it does so by wrapping a third party engine rather than by
 fingerprinting devices itself.
 
 ```swift
-HertusGuardS1.enable()
 Hertus.initialize(config)
 ```
 
-One line, and it has to be written. Swift has no portable equivalent of the
-reflection the Android SDK uses to find its adapter, so registration through
-`SignalEngineFactory` is explicit here. That is a trade rather than a loss: on
-Android the reflective lookup is invisible to R8, which strips the adapter from
-minified builds and turns Guard into a no-op indistinguishable from a correctly
-disabled Guard, and a keep rule has to ship inside the AAR to prevent it.
-Nothing can strip a registration that was executed.
+**That is the whole integration.** There is nothing to call to switch Guard on.
+Adding the `HertusGuardS1` library to a target is all that is required;
+`SignalEngineFactory` finds the adapter through the Objective-C runtime, which
+is the direct counterpart of the `Class.forName` the Android SDK uses, and
+`HertusCore` names no engine and depends on no adapter.
 
-Not calling it is a supported configuration. `enable()` returns whether there
-was an engine to register, and a build without one runs with Guard off rather
-than failing.
+Whether it then runs is the SDK's decision, taken in this order:
+
+| Switch | Where it lives |
+| --- | --- |
+| `HertusConfig.guardEnabled` | the host app |
+| `environment` and `guardInSandbox` | the host app |
+| `guard.enabled` and the rest of the block | the server |
+
+Any of them saying no is enough, and none can turn Guard on alone. A customer
+can disable identification without waiting for us, and we can disable it
+without waiting for them.
+
+Sandbox does not identify unless `guardInSandbox` is set, because everything
+Guard exists to flag, a simulator, a VPN, a reset advertising identifier, also
+describes a developer testing an integration. Guard being off is a signal
+rather than an error in every one of these cases: the SDK still reaches
+`ready`, still measures, and raises nothing through `onError`.
+
+`swift run hertus-sample` prints the resulting table.
+
+`HertusGuardS1.enable()` exists for one case only. Runtime lookup is invisible
+to the linker, so aggressive dead stripping can remove the adapter and leave
+Guard a no-op indistinguishable from a correctly disabled one. On Apple
+platforms the fix is the `-ObjC` linker flag, the counterpart of the keep rule
+that ships inside the Android AAR; a host app that cannot set it can register
+explicitly instead.
 
 **The state of this.** Everything except the engine binding is written and
 tested: the seam, the orchestration, the registry, the settings validation, the

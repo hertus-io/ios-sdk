@@ -186,18 +186,105 @@ print("""
   does.
 """)
 
+// MARK: startup
+
+section("Startup, and who decides whether Guard runs")
+print("""
+  A host app calls initialize and nothing else. Guard finds its engine at
+  runtime and decides whether to run it from guardEnabled, the environment
+  and the server's answer, in that order.
+
+  Below, the same config in two environments, with the settings the server
+  would send held constant. Nothing about the calling code changes.
+""")
+
+/// Stands in for bootstrap, which does not exist yet.
+struct SampleSettingsSource: GuardSettingsSource {
+    func load(completion: @escaping (GuardSettings?) -> Void) {
+        completion(GuardSettings(enabled: true, provider: "s1", publicKey: "key", region: "eu"))
+    }
+}
+
+/// Stands in for the real adapter, which needs an Apple binary this host does
+/// not have. It answers instantly and identifies nothing, which is enough to
+/// show which switch stopped it.
+final class SampleEngine: SignalEngine {
+    func start(config: GuardConfig) {}
+
+    func identify(timeoutMs: Int64, handler: @escaping EngineResultHandler) {
+        handler(GuardSignal(sealedPayload: "sample", requestId: "req", confidence: 0.9, source: .engine), nil, nil)
+    }
+
+    func shutdown() {}
+}
+
+func describeStartup(
+    _ label: String,
+    environment: HertusEnvironment,
+    guardEnabled: Bool = true,
+    guardInSandbox: Bool = false
+) {
+    // A local registry, so the sample cannot disturb the shared one.
+    let factory = SignalEngineFactory()
+    factory.register(provider: "s1") { SampleEngine() }
+
+    let runtime = HertusRuntime(
+        factory: factory,
+        settingsSource: SampleSettingsSource(),
+        schedule: { $0() },
+        deliver: { $0() }
+    )
+
+    var config = HertusConfig(
+        appToken: String(repeating: "a", count: 64),
+        environment: environment
+    )
+    config.guardEnabled = guardEnabled
+    config.guardInSandbox = guardInSandbox
+    config.logLevel = .suppress
+
+    var identified = false
+    config.onGuardSignal = { didIdentify, _, _ in identified = didIdentify }
+
+    runtime.initialize(config)
+
+    print(
+        "  " + label.padding(toLength: 34, withPad: " ", startingAt: 0)
+            + "state=" + "\(runtime.state)".padding(toLength: 10, withPad: " ", startingAt: 0)
+            + "guard=" + (runtime.isGuardRunning ? "on " : "off")
+            + "  identified=\(identified)"
+    )
+}
+
+print("")
+describeStartup("production", environment: .production)
+describeStartup("production, guardEnabled = false", environment: .production, guardEnabled: false)
+describeStartup("sandbox", environment: .sandbox)
+describeStartup("sandbox, guardInSandbox = true", environment: .sandbox, guardInSandbox: true)
+
+print("""
+
+  Guard is off in sandbox because everything it exists to flag, a simulator,
+  a VPN, a reset advertising identifier, also describes a developer testing
+  an integration. It reports no signal there rather than an error, because a
+  configuration state is not a failure: the SDK still reached ready, still
+  measures, and raised no error in any of the four rows.
+
+  The engine above is a stand-in registered by this sample. A real host app
+  registers nothing: it adds the HertusGuardS1 library to its target and the
+  factory finds the adapter through the Objective-C runtime.
+""")
+
 // MARK: what is not here
 
 section("What this sample deliberately does not do")
 print("""
-  No network call was made and no identification engine was started, because
-  neither exists in this SDK yet.
+  No network call was made. Bootstrap does not exist yet, so the settings
+  above came from a stub standing in for it.
 
   Still to come, in this order:
     1. bootstrap        fetch configuration, cache it, retry with backoff
-    2. Guard            the identification adapter, behind the same seam the
-                        Android SDK uses, so no shipped symbol names the vendor
-    3. ingest           sessions, installs, and the events printed above
+    2. ingest           sessions, installs, and the events printed above
 
   Everything shown here is covered by `swift test`. Nothing here needs a Mac.
 """)
