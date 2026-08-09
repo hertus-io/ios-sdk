@@ -87,53 +87,89 @@ final class SdkStateTests: XCTestCase {
 
 final class AppTokenTests: XCTestCase {
 
-    private let valid = String(repeating: "a", count: 64)
+    private let secret = String(repeating: "0123456789abcdef", count: 4)
+    private var production: String { "sk_prod_" + secret }
+    private var sandbox: String { "sk_sandbox_" + secret }
 
-    func test64LowercaseHexCharactersIsTheShape() {
-        XCTAssertTrue(AppToken.isWellFormed(valid))
-        XCTAssertTrue(AppToken.isWellFormed(String(repeating: "0123456789abcdef", count: 4)))
+    func testAnEnvironmentPrefixAnd64LowercaseHexIsTheShape() {
+        XCTAssertTrue(AppToken.isWellFormed(production))
+        XCTAssertTrue(AppToken.isWellFormed(sandbox))
+        XCTAssertTrue(AppToken.isWellFormed("sk_prod_" + String(repeating: "a", count: 64)))
+    }
+
+    /// The format this replaced. Refused rather than read as production: a bare
+    /// token means a build predating the change, and quietly giving it an
+    /// environment nobody chose is the mistake the prefix exists to prevent.
+    func testTheOldBareHexTokenIsRefused() {
+        XCTAssertFalse(AppToken.isWellFormed(secret))
+        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "a", count: 64)))
     }
 
     func testTheWrongLengthIsRefused() {
-        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "a", count: 63)))
-        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "a", count: 65)))
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_" + String(repeating: "a", count: 63)))
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_" + String(repeating: "a", count: 65)))
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_"))
         XCTAssertFalse(AppToken.isWellFormed(""))
+    }
+
+    func testAnUnknownEnvironmentIsRefused() {
+        XCTAssertFalse(AppToken.isWellFormed("sk_staging_" + secret))
+        XCTAssertFalse(AppToken.isWellFormed("pk_prod_" + secret))
+        XCTAssertFalse(AppToken.isWellFormed(secret + "sk_prod_"))
     }
 
     /// The server mints lowercase, so uppercase means the value came from
     /// somewhere else.
-    func testUppercaseHexIsRefused() {
-        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "A", count: 64)))
+    func testUppercaseIsRefused() {
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_" + String(repeating: "A", count: 64)))
+        XCTAssertFalse(AppToken.isWellFormed("SK_PROD_" + secret))
     }
 
     func testNonHexCharactersAreRefused() {
-        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "g", count: 64)))
-        XCTAssertFalse(AppToken.isWellFormed(String(repeating: "-", count: 64)))
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_" + String(repeating: "g", count: 64)))
+        XCTAssertFalse(AppToken.isWellFormed("sk_prod_" + String(repeating: "-", count: 64)))
     }
 
     /// A pasted token often arrives wrapped in whitespace. None of that is a
     /// token.
     func testSurroundingWhitespaceIsNotSilentlyAccepted() {
-        XCTAssertFalse(AppToken.isWellFormed(" " + valid))
-        XCTAssertFalse(AppToken.isWellFormed(valid + "\n"))
+        XCTAssertFalse(AppToken.isWellFormed(" " + production))
+        XCTAssertFalse(AppToken.isWellFormed(production + "\n"))
     }
 
-    func testTheFailureMessagePointsAtTheDashboard() {
+    /// The environment comes from the token, so a build cannot hold a
+    /// production token and a sandbox setting at once. That combination used to
+    /// be expressible and neither side could notice.
+    func testTheEnvironmentIsReadFromThePrefix() {
+        XCTAssertEqual(AppToken.environment(of: production), .production)
+        XCTAssertEqual(AppToken.environment(of: sandbox), .sandbox)
+    }
+
+    func testATokenThatIsNotOneHasNoEnvironment() {
+        XCTAssertNil(AppToken.environment(of: secret))
+        XCTAssertNil(AppToken.environment(of: "sk_staging_" + secret))
+        XCTAssertNil(AppToken.environment(of: ""))
+    }
+
+    func testTheFailureMessagePointsAtTheDashboardAndNamesTheShape() {
         XCTAssertTrue(AppToken.malformedMessage.contains("SDK credentials"))
-        XCTAssertTrue(AppToken.malformedMessage.contains("64"))
+        XCTAssertTrue(AppToken.malformedMessage.contains("sk_prod_"))
+        XCTAssertTrue(AppToken.malformedMessage.contains("sk_sandbox_"))
     }
 
-    func testRedactionKeepsOnlyTheTail() {
-        let token = String(repeating: "0123456789abcdef", count: 4)
-        let redacted = AppToken.redact(token)
-
-        XCTAssertEqual(redacted, "...89abcdef")
-        XCTAssertFalse(redacted.contains(token))
+    /// The prefix survives redaction and the secret does not. Which environment
+    /// a build reports to is the question somebody reading a support ticket is
+    /// asking, and it is not the secret.
+    func testRedactionKeepsTheEnvironmentAndDropsTheSecret() {
+        XCTAssertEqual(AppToken.redact(production), "sk_prod_…cdef")
+        XCTAssertEqual(AppToken.redact(sandbox), "sk_sandbox_…cdef")
+        XCTAssertFalse(AppToken.redact(production).contains(secret))
     }
 
-    func testRedactingSomethingTooShortRevealsNothing() {
-        XCTAssertEqual(AppToken.redact("abc"), "...")
-        XCTAssertEqual(AppToken.redact(""), "...")
+    func testRedactingSomethingThatIsNotATokenRevealsNothing() {
+        XCTAssertEqual(AppToken.redact("abc"), "…")
+        XCTAssertEqual(AppToken.redact(""), "…")
+        XCTAssertEqual(AppToken.redact(secret), "…")
     }
 }
 
@@ -272,10 +308,11 @@ final class BackoffTests: XCTestCase {
 
 final class HertusConfigTests: XCTestCase {
 
-    private let token = String(repeating: "a", count: 64)
+    private let secret = String(repeating: "a", count: 64)
+    private var token: String { "sk_prod_" + secret }
 
     func testTheDefaultsAreTheDocumentedOnes() {
-        let config = HertusConfig(appToken: token, environment: .production)
+        let config = HertusConfig(appToken: token)
 
         XCTAssertEqual(config.logLevel, .info)
         XCTAssertEqual(config.delayStartSeconds, 0)
@@ -285,7 +322,7 @@ final class HertusConfigTests: XCTestCase {
     }
 
     func testDelayStartIsClampedRatherThanTrusted() {
-        var config = HertusConfig(appToken: token, environment: .sandbox)
+        var config = HertusConfig(appToken: token)
 
         config.delayStartSeconds = -5
         XCTAssertEqual(config.delayStartMillis, 0)
@@ -300,7 +337,7 @@ final class HertusConfigTests: XCTestCase {
     /// Value semantics are why the iOS SDK needs no snapshot: a copy handed to
     /// the SDK cannot be edited from under it.
     func testACopyDoesNotSeeLaterEdits() {
-        var original = HertusConfig(appToken: token, environment: .production)
+        var original = HertusConfig(appToken: token)
         let copy = original
         original.logLevel = .verbose
 
@@ -308,8 +345,30 @@ final class HertusConfigTests: XCTestCase {
     }
 
     func testTokenShapeIsAvailableToAHostAppsOwnTests() {
-        XCTAssertTrue(HertusConfig(appToken: token, environment: .production).hasWellFormedToken)
-        XCTAssertFalse(HertusConfig(appToken: "nope", environment: .production).hasWellFormedToken)
+        XCTAssertTrue(HertusConfig(appToken: token).hasWellFormedToken)
+        XCTAssertFalse(HertusConfig(appToken: "nope").hasWellFormedToken)
+        XCTAssertFalse(
+            HertusConfig(appToken: secret).hasWellFormedToken,
+            "the secret half without its prefix is not a token"
+        )
+    }
+
+    /// The environment follows the token, so a build cannot hold a production
+    /// token and declare itself sandbox. That combination used to be
+    /// expressible and neither the SDK nor the server could tell.
+    func testTheEnvironmentFollowsTheToken() {
+        XCTAssertEqual(HertusConfig(appToken: token).resolvedEnvironment, .production)
+        XCTAssertEqual(
+            HertusConfig(appToken: "sk_sandbox_" + secret).resolvedEnvironment,
+            .sandbox
+        )
+    }
+
+    /// Production is the safe reading of a token that cannot be parsed: it is
+    /// the quieter log level and the one that refuses a cleartext serverUrl.
+    func testAMalformedTokenReadsAsProduction() {
+        XCTAssertEqual(HertusConfig(appToken: "nope").resolvedEnvironment, .production)
+        XCTAssertEqual(HertusConfig(appToken: secret).resolvedEnvironment, .production)
     }
 }
 

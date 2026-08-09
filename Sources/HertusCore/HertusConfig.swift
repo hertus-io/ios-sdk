@@ -20,10 +20,17 @@ public typealias HertusGuardHandler = (_ identified: Bool, _ confidence: Double?
 /// different is paid by them.
 ///
 /// ```swift
-/// var config = HertusConfig(appToken: Secrets.hertusToken, environment: .production)
+/// var config = HertusConfig(appToken: Secrets.hertusToken)
 /// config.logLevel = .debug
 /// Hertus.initialize(config)
 /// ```
+///
+/// There is deliberately no `environment` argument. There used to be, alongside
+/// a token that did not say which environment it was for, so a build could hold
+/// a production token and declare itself sandbox — and neither the SDK nor the
+/// server could tell. The token names its environment now, so the wrong state
+/// is unrepresentable rather than merely detectable. Read `resolvedEnvironment`
+/// for what the SDK settled on.
 ///
 /// A `struct` rather than a class, which is where this departs from the Android
 /// SDK on purpose. There, `HertusConfig` is a mutable object the host app keeps
@@ -44,7 +51,15 @@ public struct HertusConfig {
     /// docs/SDK.md, "Security properties".
     public var appToken: String
 
-    public var environment: HertusEnvironment
+    /// The environment `appToken` names, or `.production` when it names none.
+    ///
+    /// Production is the safe reading of a token that cannot be parsed: it is
+    /// the quieter log level and the one that refuses a cleartext `serverUrl`.
+    /// A malformed token stops initialization anyway, so this only governs what
+    /// happens while that is being reported.
+    public var resolvedEnvironment: HertusEnvironment {
+        AppToken.environment(of: appToken) ?? .production
+    }
 
     /// Forced to `.debug` or quieter in `.production`; see `HertusLogLevel`.
     public var logLevel: HertusLogLevel = .info
@@ -75,21 +90,22 @@ public struct HertusConfig {
     /// developer's own install, which is the one they are looking for.
     public var guardInSandbox: Bool = false
 
-    /// Point the SDK at a different backend. Nil uses the default for
-    /// `environment`.
+    /// Point the SDK at a different backend. Nil uses the default for the
+    /// environment named by `appToken`.
     ///
     /// An origin (`https://host[:port]`), not a base path: the SDK appends the
-    /// versioned API path itself. Cleartext is accepted only when `environment`
-    /// is `.sandbox` and the host cannot be reached from the public internet.
+    /// versioned API path itself. Cleartext is accepted only when `appToken` is
+    /// a `sk_sandbox_` token and the host cannot be reached from the public
+    /// internet — so reaching a plain-HTTP server requires holding a sandbox
+    /// credential, rather than merely saying so.
     public var serverUrl: String?
 
     public var onInitialized: HertusInitHandler?
     public var onError: HertusErrorHandler?
     public var onGuardSignal: HertusGuardHandler?
 
-    public init(appToken: String, environment: HertusEnvironment) {
+    public init(appToken: String) {
         self.appToken = appToken
-        self.environment = environment
     }
 
     /// `delayStartSeconds` clamped and converted, so a negative or absurd value

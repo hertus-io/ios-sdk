@@ -4,7 +4,7 @@ import Foundation
 /// The Hertus SDK.
 ///
 /// ```swift
-/// let config = HertusConfig(appToken: Secrets.hertusToken, environment: .production)
+/// let config = HertusConfig(appToken: Secrets.hertusToken)
 /// Hertus.initialize(config)
 /// ```
 ///

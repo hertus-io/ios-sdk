@@ -165,19 +165,23 @@ show(CustomEvent("not a valid name") { $0.put("kept", true) })
 
 section("Configuration policy")
 
-var config = HertusConfig(
-    appToken: String(repeating: "a", count: 64),
-    environment: .sandbox
-)
+var config = HertusConfig(appToken: "sk_sandbox_" + String(repeating: "a", count: 64))
 config.logLevel = .debug
 config.delayStartSeconds = 99
 
 print("  token well formed:  \(config.hasWellFormedToken)")
+print("  environment:        \(config.resolvedEnvironment.wireValue), read from the prefix")
 print("  delayStart 99s becomes \(config.delayStartMillis)ms, because it is clamped")
 
-var wrong = HertusConfig(appToken: "not-a-token", environment: .production)
+// The secret half without its prefix. Refused rather than assumed to be
+// production: a bare token means a build predating the prefix, and guessing an
+// environment for it is exactly what the prefix exists to stop.
+let bare = HertusConfig(appToken: String(repeating: "a", count: 64))
+print("  a token with no prefix: well formed = \(bare.hasWellFormedToken)")
+
+var wrong = HertusConfig(appToken: "not-a-token")
 wrong.serverUrl = "http://example.com"
-print("  a pasted token that is not 64 hex: well formed = \(wrong.hasWellFormedToken)")
+print("  a pasted token that is not a token: well formed = \(wrong.hasWellFormedToken)")
 
 print("""
 
@@ -249,10 +253,10 @@ func describeStartup(
         deliver: { $0() }
     )
 
-    var config = HertusConfig(
-        appToken: String(repeating: "a", count: 64),
-        environment: environment
-    )
+    // The environment is chosen by picking a token, because that is now the
+    // only way to choose one.
+    let prefix = environment == .sandbox ? "sk_sandbox_" : "sk_prod_"
+    var config = HertusConfig(appToken: prefix + String(repeating: "a", count: 64))
     config.guardEnabled = guardEnabled
     config.guardInSandbox = guardInSandbox
     config.logLevel = .suppress

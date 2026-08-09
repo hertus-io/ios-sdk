@@ -9,7 +9,7 @@ import XCTest
 /// queue to pump and no expectation to wait on.
 final class HertusRuntimeTests: XCTestCase {
 
-    private let token = String(repeating: "a", count: 64)
+    private let secret = String(repeating: "a", count: 64)
 
     private var factory = SignalEngineFactory()
     private var engine = FakeSignalEngine()
@@ -50,7 +50,11 @@ final class HertusRuntimeTests: XCTestCase {
         guardEnabled: Bool = true,
         guardInSandbox: Bool = false
     ) -> HertusConfig {
-        var config = HertusConfig(appToken: appToken ?? token, environment: environment)
+        // The environment is chosen by picking a token, because that is now the
+        // only way to choose one. An explicit appToken wins, so the malformed
+        // cases can still be driven.
+        let prefix = environment == .sandbox ? "sk_sandbox_" : "sk_prod_"
+        var config = HertusConfig(appToken: appToken ?? (prefix + secret))
         config.guardEnabled = guardEnabled
         config.guardInSandbox = guardInSandbox
         config.logLevel = .verbose
@@ -160,15 +164,23 @@ final class HertusRuntimeTests: XCTestCase {
 
     /// A malformed token is a programming error, caught on the caller's thread
     /// before any work is scheduled.
+    ///
+    /// The bare 64-hex case is the format this replaced, and it has to be
+    /// refused rather than read as production: a bare token means a build
+    /// predating the prefix, and quietly giving it an environment nobody chose
+    /// is the mistake the prefix exists to prevent.
     func testAMalformedTokenIsTerminalAndSaysWhy() {
-        let runtime = makeRuntime(settings: usableSettings())
-        runtime.initialize(makeConfig(environment: .production, appToken: "not-a-token"))
+        for bad in ["not-a-token", secret, "sk_staging_" + secret, ""] {
+            setUp()
+            let runtime = makeRuntime(settings: usableSettings())
+            runtime.initialize(makeConfig(environment: .production, appToken: bad))
 
-        XCTAssertEqual(runtime.state, .disabled)
-        XCTAssertEqual(errors, [.configurationInvalid])
-        XCTAssertEqual(initialized, [false])
-        XCTAssertFalse(runtime.isEnabled())
-        XCTAssertNil(engine.startedWith, "nothing should start behind a bad token")
+            XCTAssertEqual(runtime.state, .disabled, "token: \(bad)")
+            XCTAssertEqual(errors, [.configurationInvalid], "token: \(bad)")
+            XCTAssertEqual(initialized, [false], "token: \(bad)")
+            XCTAssertFalse(runtime.isEnabled(), "token: \(bad)")
+            XCTAssertNil(engine.startedWith, "nothing should start behind a bad token: \(bad)")
+        }
     }
 
     func testInitializeIsIgnoredTheSecondTime() {

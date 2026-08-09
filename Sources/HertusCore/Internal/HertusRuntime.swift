@@ -88,12 +88,12 @@ public final class HertusRuntime {
         let device = DeviceInfoReader.read(sdkVersion: SdkInfo.version)
 
         return BootstrapConfigurationSource(
-            cache: BootstrapCache(appToken: config.appToken, environment: config.environment),
+            cache: BootstrapCache(appToken: config.appToken, environment: config.resolvedEnvironment),
             newFetcher: {
                 BootstrapClient(
                     baseUrl: serverUrl,
                     appToken: config.appToken,
-                    environment: config.environment,
+                    environment: config.resolvedEnvironment,
                     device: device,
                     log: log
                 )
@@ -110,7 +110,7 @@ public final class HertusRuntime {
             queue: EventQueue(
                 store: FileEventStore(
                     appToken: config.appToken,
-                    environment: config.environment,
+                    environment: config.resolvedEnvironment,
                     log: log
                 ),
                 log: log
@@ -118,7 +118,7 @@ public final class HertusRuntime {
             uploader: IngestClient(
                 baseUrl: ingestUrl,
                 appToken: config.appToken,
-                environment: config.environment,
+                environment: config.resolvedEnvironment,
                 device: device,
                 log: log
             ),
@@ -203,7 +203,7 @@ public final class HertusRuntime {
     /// one is a programming error and the developer is watching the console
     /// right now. Everything after this point is somebody's network being bad.
     public func initialize(_ config: HertusConfig) {
-        let logger = Logger(level: config.logLevel, environment: config.environment)
+        let logger = Logger(level: config.logLevel, environment: config.resolvedEnvironment)
 
         lock.lock()
         if initialized {
@@ -214,9 +214,9 @@ public final class HertusRuntime {
         initialized = true
         lock.unlock()
 
-        let endpoint = ServerEndpoints.resolve(override: config.serverUrl, environment: config.environment)
+        let endpoint = ServerEndpoints.resolve(override: config.serverUrl, environment: config.resolvedEnvironment)
         if endpoint.refusedOverride {
-            logger.w("serverUrl was refused; using the default for \(config.environment.wireValue)")
+            logger.w("serverUrl was refused; using the default for \(config.resolvedEnvironment.wireValue)")
         }
 
         let dispatcher = CallbackDispatcher(
@@ -255,11 +255,11 @@ public final class HertusRuntime {
         let guardOff = HertusGuard.clientOffReason(
             clientEnabled: config.guardEnabled,
             guardInSandbox: config.guardInSandbox,
-            environment: config.environment
+            environment: config.resolvedEnvironment
         )
         let guardState = guardOff.map { "off, \($0)" } ?? "requested"
         logger.i(
-            "initialize(env=\(config.environment.wireValue), sdk=\(SdkInfo.version), "
+            "initialize(env=\(config.resolvedEnvironment.wireValue), sdk=\(SdkInfo.version), "
                 + "server=\(endpoint.url), guard=\(guardState))"
         )
 
@@ -350,7 +350,7 @@ extension HertusRuntime: ConfigurationListener {
             settings: config.guardSettings,
             clientEnabled: hostConfig.guardEnabled,
             guardInSandbox: hostConfig.guardInSandbox,
-            environment: hostConfig.environment,
+            environment: hostConfig.resolvedEnvironment,
             sdkVersion: SdkInfo.version
         )
 
@@ -407,7 +407,7 @@ extension HertusRuntime: ConfigurationListener {
             return
         }
 
-        let named = UrlPolicy.accept(config.ingestEndpoint, environment: hostConfig.environment)
+        let named = UrlPolicy.accept(config.ingestEndpoint, environment: hostConfig.resolvedEnvironment)
         if config.ingestEndpoint != nil, named == nil {
             logger.w("the configured ingest endpoint was refused; using the server URL")
         }
